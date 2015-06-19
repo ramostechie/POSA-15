@@ -1,5 +1,6 @@
 package vandy.mooc.utils;
 
+import java.util.Collection;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -103,16 +104,6 @@ public class ExecutorServiceTimeoutCache<K, V>
                 }
             };
 
-        // Create a ScheduledFuture that will execute the
-        // cleanupCacheRunnable after the designated timeout.
-        ScheduledFuture<?> future =
-            mScheduledExecutorService.schedule(cleanupCacheRunnable,
-                                               timeout,
-                                               TimeUnit.SECONDS);
-
-        // Set the future now that we have it.
-        cacheValues.setFuture(future);
-
         // Put a new CacheValues object into the ConcurrentHashMap
         // associated with the key and return the previous
         // CacheValues.
@@ -129,6 +120,23 @@ public class ExecutorServiceTimeoutCache<K, V>
         // original cacheValues reference.
         if (prevCacheValues != null)
             prevCacheValues.mFuture.cancel(true);
+        
+        // Create a ScheduledFuture for the new cacheValues object that
+        // will execute the cleanupCacheRunnable after the designated
+        // timeout.
+        ScheduledFuture<?> future =
+            mScheduledExecutorService.schedule(cleanupCacheRunnable,
+                                               timeout,
+                                               TimeUnit.SECONDS);
+
+        // Now that we have a future, attach it to the cacheValues object
+        // that has already been safely added to the cache. The reason we
+        // do not set the future before adding the cacheValues object to the
+        // cache is because it is possible (but unlikely) for the future 
+        // to trigger in the small time window between when it is started
+        // and returned from the ScheduledExecutorService and when the 
+        // put() call is made to add it to the cache.
+        cacheValues.setFuture(future);
     }
 
     /**
@@ -169,6 +177,12 @@ public class ExecutorServiceTimeoutCache<K, V>
      */
     @Override
     protected void close() {
-        mScheduledExecutorService.shutdown();
+        // Cancel all remaining futures.
+        for (CacheValues cvs : mResults.values())
+            if (cvs.mFuture != null)
+                cvs.mFuture.cancel(true);
+
+        // Shutdown the ScheduledExecutorService immediately.
+        mScheduledExecutorService.shutdownNow();
     }
 }
